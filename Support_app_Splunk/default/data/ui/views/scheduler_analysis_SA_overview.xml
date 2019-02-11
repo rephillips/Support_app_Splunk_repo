@@ -1,0 +1,655 @@
+<form hideEdit="false" script="common_control.js, table_cell_highlighting.js, table_cell_highlighting1.js" stylesheet="shared.css, health-check.css, table_cell_highlighting.css" theme="light">
+  <label>SA Scheduler Analysis Overview</label>
+  <search id="members_heartbeat_timeout_base" base="membersSnapshotSearch">
+    <query>
+          fields label, status, last_heartbeat, last_heartbeat_captain
+          | join label type=outer [
+            | rest splunk_server_group="$group$" splunk_server_group=dmc_group_search_head /services/configs/conf-server/shclustering
+            | fields splunk_server, heartbeat_timeout
+            | rename splunk_server as label
+          ]
+          | where status != "Up" OR (last_heartbeat_captain - last_heartbeat) &gt; heartbeat_timeout
+        </query>
+    <preview>
+      <condition match="$job.resultCount$ &gt; 0">
+        <set token="member_heartbeat_text_unhealthy">There are members in this cluster that do not have a healthy heartbeat status.</set>
+      </condition>
+      <condition match="$job.resultCount$ = 0">
+        <set token="member_heartbeat_text_healthy">All members in this cluster have a healthy heartbeat status.</set>
+      </condition>
+    </preview>
+  </search>
+  <search id="member_peer_consistency_base">
+    <query>
+          | rest splunk_server_group="$group$" splunk_server_group=dmc_group_search_head /services/search/distributed/peers
+          | fields splunk_server, peerName
+          | stats values(peerName) as peers by splunk_server
+          | nomv peers
+          | stats values(splunk_server) AS search_heads by peers
+          | makemv peers
+          | fields search_heads peers
+          | rename search_heads as "Search Head Cluster Member", peers as "Search Peer List"
+        </query>
+    <preview>
+      <condition match="$job.resultCount$ &gt; 1">
+        <set token="member_peer_inconsistency_text">The list of distributed search peers is inconsistent among cluster members. This could result in inconsistent search results within the search head cluster.</set>
+      </condition>
+    </preview>
+  </search>
+  <search base="membersSnapshotSearch">
+    <query>
+          where total_no_shared_common_baseline+total_unable_to_connect &gt; 0
+        </query>
+    <preview>
+      <condition match="$job.resultCount$ &gt; 0">
+        <set token="common_baseline_text_unhealthy">There are members in this cluster that do not share a common baseline. Action may be required.</set>
+        <unset token="common_baseline_text_healthy"></unset>
+      </condition>
+      <condition match="$job.resultCount$ = 0">
+        <set token="common_baseline_text_healthy">All members in this cluster share a common baseline.</set>
+        <unset token="common_baseline_text_unhealthy"></unset>
+      </condition>
+    </preview>
+  </search>
+  <search id="snapshot_search_concurrency_base">
+    <query>
+          | rest splunk_server_group="$group$" splunk_server_group=dmc_group_search_head /services/server/status/resource-usage/splunk-processes
+          | search search_props.role="head"
+          | dedup search_props.sid
+        </query>
+  </search>
+  <search id="search_concurrency_vs_limits_base" base="snapshot_search_concurrency_base">
+    <query>
+            stats count(eval(('search_props.type'=="scheduled" OR 'search_props.type'=="summary indexing" OR 'search_props.type'=="report acceleration" OR 'search_props.type'=="datamodel acceleration" OR 'search_props.type'=="ad-hoc") AND ('search_props.mode'=="historical" OR 'search_props.mode'=="historical batch"))) as count_total_hist,
+            count(eval(('search_props.type'=="scheduled" OR 'search_props.type'=="summary indexing" OR 'search_props.type'=="report acceleration" OR 'search_props.type'=="datamodel acceleration" OR 'search_props.type'=="ad-hoc") AND ('search_props.mode'=="RT" OR 'search_props.mode'=="RT indexed"))) as count_total_rt,
+            count(eval(('search_props.type'=="scheduled" OR 'search_props.type'=="summary indexing" OR 'search_props.type'=="report acceleration" OR 'search_props.type'=="datamodel acceleration") AND ('search_props.mode'=="historical" OR 'search_props.mode'=="historical batch"))) as count_hist_scheduled_search,
+            count(eval(('search_props.type'=="scheduled" OR 'search_props.type'=="summary indexing" OR 'search_props.type'=="report acceleration" OR 'search_props.type'=="datamodel acceleration") AND ('search_props.mode'=="RT" OR 'search_props.mode'=="RT indexed"))) as count_rt_scheduled_search,
+            count(eval(('search_props.type'=="report acceleration" OR 'search_props.type'=="datamodel acceleration"))) as count_auto_summary_search
+            | eval count_total_adhoc_scheduled_search = count_total_hist + count_total_rt
+            | eval count_total_scheduled_search = count_hist_scheduled_search + count_rt_scheduled_search
+            | eval dummy_key = "dummy_key"
+            | fields count_total_hist, count_hist_scheduled_search,
+                     count_total_rt, count_rt_scheduled_search,
+                     count_auto_summary_search,
+                     count_total_adhoc_scheduled_search, count_total_scheduled_search,
+                     dummy_key
+            | join dummy_key type=outer [
+              | rest splunk_server_group="$group$" splunk_server_group=dmc_group_search_head "/services/server/status/limits/search-concurrency?cluster_wide_quota=1"
+              | stats max(max_hist_searches) as max_hist_searches, max(max_hist_scheduled_searches) as max_hist_scheduled_searches, max(max_rt_searches), as max_rt_searches, max(max_rt_scheduled_searches) as max_rt_scheduled_searches, max(max_auto_summary_searches) as max_auto_summary_searches
+              | eval dummy_key = "dummy_key"
+              | fields max_hist_searches, max_hist_scheduled_searches,
+                  max_rt_searches, max_rt_scheduled_searches,
+                  max_auto_summary_searches,
+                  dummy_key
+            ]
+          </query>
+    <preview>
+      <eval token="count_total_adhoc_scheduled_search">if(isnotnull('result.count_total_adhoc_scheduled_search'), 'result.count_total_adhoc_scheduled_search', 0)</eval>
+      <eval token="count_total_scheduled_search">if(isnotnull('result.count_total_scheduled_search'), 'result.count_total_scheduled_search', 0)</eval>
+    </preview>
+  </search>
+  <search id="shcSearchConBase">
+    <query>
+        `dmc_set_index_introspection` search_group=dmc_group_search_head search_group="$group$" sourcetype=splunk_resource_usage ((component=PerProcess data.search_props.sid::*) OR component=Hostwide)
+        | `dmc_rename_introspection_fields`
+        | `dmc_set_bin`
+        | stats dc(sid) AS distinct_search_count by provenance, mode, app, type, user, host, _time
+        </query>
+    <earliest>$time.earliest$</earliest>
+    <latest>$time.latest$</latest>
+  </search>
+  <search id="captainElectionBaseSearch">
+    <query>
+`dmc_set_index_internal` search_group="$group$" sourcetype=splunkd component=Metrics group=captainstability upgrades_to_captain=1
+| stats count by _time, upgrades_to_captain, host
+        </query>
+    <earliest>$time.earliest$</earliest>
+    <latest>$time.latest$</latest>
+  </search>
+  <search id="captainSnapshotSearch">
+    <query>
+      | rest splunk_server_group=$group$ splunk_server_group=dmc_group_search_head /services/shcluster/captain/info
+      | dedup peer_scheme_host_port
+      | fields label
+    </query>
+    <finalized>
+      <set token="captain_name">$result.label$</set>
+    </finalized>
+  </search>
+  <search id="membersSnapshotSearch">
+    <query>
+| rest splunk_server=local /services/search/distributed/peers
+| where search_groups="$group$" AND server_roles="search_head"
+| eval label = host
+| join guid type=outer [
+  | rest splunk_server_group="$group$" splunk_server_group=dmc_group_search_head /services/shcluster/member/members count=0
+  | dedup label
+  | eval guid = title
+]
+| join label type=outer [
+  | rest splunk_server=$captain_name$ /services/shcluster/captain/members count=0
+  | where splunk_server == label
+  | fields label, last_heartbeat
+  | rename last_heartbeat as last_heartbeat_captain
+]
+| eventstats values(last_heartbeat_captain) as last_heartbeat_captain
+| join label type=outer [
+  | rest splunk_server_group="$group$" splunk_server_group=dmc_group_search_head /services/shcluster/captain/info
+  | where splunk_server == label
+  | eval age = now() - elected_captain
+  | eval captain_age = case(age &lt; 60, "&lt; 1m", age &gt;= 60 AND age &lt; 3600, round(age / 60, 0)."m", age &gt;= 3600 AND age &lt; 86400, round(age / 3600, 0)."h", age &gt;= 86400, round(age / 86400, 0)."d")
+  | `dmc_time_format(elected_captain)`
+  | eval role = "Captain (" . captain_age . ")"
+  | fields label captain_age elected_captain role
+]
+| join label type=outer [
+  | rest /services/replication/configuration/health check_share_baseline=1 splunk_server_group="$group$" splunk_server_group=dmc_group_search_head
+  | stats values(server_name) as baselines, count(server_name) as num_baselines by splunk_server, check_share_baseline
+  | eval shared_common_baseline = if(check_share_baseline == "Yes", baselines, "")
+  | eval no_shared_common_baseline = if(check_share_baseline == "No", baselines, "")
+  | eval unable_to_connect = if(check_share_baseline == "Connection error", baselines, "")
+  | eval num_shared_common_baseline = if(check_share_baseline == "Yes", num_baselines, 0)
+  | eval num_no_shared_common_baseline = if(check_share_baseline == "No", num_baselines, 0)
+  | eval num_unable_to_connect = if(check_share_baseline == "Connection error", num_baselines, 0)
+  | stats sum(num_shared_common_baseline) as total_shared_common_baseline, sum(num_no_shared_common_baseline) as total_no_shared_common_baseline, sum(num_unable_to_connect) as total_unable_to_connect, values(shared_common_baseline) as shared_common_baseline, values(no_shared_common_baseline) as no_shared_common_baseline, values(unable_to_connect) as unable_to_connect by splunk_server
+  | eval ratio = total_shared_common_baseline . "/" . (total_shared_common_baseline+total_no_shared_common_baseline+total_unable_to_connect)
+  | rename splunk_server as label
+]
+| join label type=outer [
+  | rest /services/replication/configuration/health unpublished=1 splunk_server_group="$group$" splunk_server_group=dmc_group_search_head
+  | rename "Number of unpublished changes" as unpublished_changes
+  | eval unpublished_changes=if(unpublished_changes=="0 (this instance is the captain)", 0, unpublished_changes)
+  | rename splunk_server as label
+]
+| eval role = if(isnotnull(role), role, "Member")
+| sort role
+    </query>
+  </search>
+  <fieldset submitButton="false">
+    <input type="dropdown" token="group" searchWhenChanged="true">
+      <label>select search head</label>
+      <fieldForLabel>host</fieldForLabel>
+      <fieldForValue>host</fieldForValue>
+      <search>
+        <query>| metadata type=hosts index=_* | dedup host | fields host</query>
+        <earliest>-60m@m</earliest>
+        <latest>now</latest>
+      </search>
+    </input>
+    <input type="time" token="time" searchWhenChanged="true">
+      <label></label>
+      <default>
+        <earliest>-60m@m</earliest>
+        <latest>now</latest>
+      </default>
+    </input>
+  </fieldset>
+  <row>
+    <panel>
+      <title>Number of scheduled searches configured &amp; enabled</title>
+      <single>
+        <search>
+          <query>| rest /servicesNS/-/-/saved/searches splunk_server=$group$  | search  disabled=0 is_scheduled=1| table title  cron_schedule dispatch.earliest_time dispatch.latest_time auto_summarize  action.email realtime_schedule eai:acl.app eai:acl.owner schedule_priority auto_summarize.dispatch.earliest_time auto_summarize.dispatch.latest_time allow_skew  action.summary_index | append [ | rest /servicesNS/-/-/data/models splunk_server=$group$ | search acceleration=1 | table title acceleration.cron_schedule acceleration.earliest_time acceleration.max_time dataset.type eai:acl.app eai:acl.owner  | rename acceleration.cron_schedule as acceleration_cron_schedule acceleration.earliest_time as acceleration_et acceleration.max_time as acceleration_max_time dataset.type as dataset_type eai:acl.app as app eai:acl.owner as owner] | stats count</query>
+          <earliest>$time.earliest$</earliest>
+          <latest>$time.latest$</latest>
+          <sampleRatio>1</sampleRatio>
+        </search>
+        <option name="drilldown">all</option>
+        <option name="rangeColors">["0x53a051","0x0877a6","0xf8be34","0xf1813f","0xdc4e41"]</option>
+        <option name="refresh.display">progressbar</option>
+        <option name="underLabel">click for detail</option>
+        <drilldown>
+          <set token="ss_count">$click.value$</set>
+        </drilldown>
+      </single>
+    </panel>
+    <panel>
+      <title>scheduled searches running over All Time</title>
+      <single>
+        <search>
+          <query>| rest /servicesNS/-/-/saved/searches splunk_server="$group$" | where is_scheduled=1 | search disabled=0   | search dispatch.earliest_time=0  | stats count</query>
+          <earliest>$time.earliest$</earliest>
+          <latest>$time.latest$</latest>
+          <sampleRatio>1</sampleRatio>
+        </search>
+        <option name="colorMode">none</option>
+        <option name="drilldown">all</option>
+        <option name="rangeColors">["0xd93f3c","0xd93f3c"]</option>
+        <option name="rangeValues">[0]</option>
+        <option name="refresh.display">progressbar</option>
+        <option name="trellis.enabled">0</option>
+        <option name="trellis.scales.shared">1</option>
+        <option name="trellis.size">medium</option>
+        <option name="underLabel">click for detail</option>
+        <option name="unitPosition">after</option>
+        <option name="useColors">1</option>
+        <option name="useThousandSeparators">1</option>
+        <drilldown>
+          <set token="count">$click.value$</set>
+        </drilldown>
+      </single>
+    </panel>
+    <panel>
+      <title>Real Time Searches Running</title>
+      <single>
+        <search>
+          <query>index=_introspection host="$group$" sourcetype=splunk_resource_usage (component=PerProcess data.search_props.sid::*)  "data.search_props.type"!="ad-hoc"  "data.search_props.mode"=RT | dedup "data.search_props.label" | table data.search_props.label data.search_props.app data.search_props.mode data.search_props.sid data.elapsed | rename data.search_props.label as "savedsearch name" data.search_props.app as app data.search_props.mode as mode data.search_props.sid as sid data.elapsed as "has been running for (seconds)" | stats count</query>
+          <earliest>$time.earliest$</earliest>
+          <latest>$time.latest$</latest>
+          <sampleRatio>1</sampleRatio>
+        </search>
+        <option name="drilldown">all</option>
+        <option name="rangeColors">["0x53a051","0xf8be34","0xdc4e41"]</option>
+        <option name="rangeValues">[0,1]</option>
+        <option name="refresh.display">progressbar</option>
+        <option name="underLabel">click for detail</option>
+        <option name="useColors">1</option>
+        <drilldown>
+          <set token="rt_count">$click.value$</set>
+        </drilldown>
+      </single>
+    </panel>
+  </row>
+  <row>
+    <panel depends="$rt_count$">
+      <title>scheduled searches configured</title>
+      <html>
+    <a data-unset-token="rt_count">Close this panel</a>
+  </html>
+      <table>
+        <search>
+          <query>index=_introspection host=$group$ sourcetype=splunk_resource_usage (component=PerProcess data.search_props.sid::*)  "data.search_props.type"!="ad-hoc"  "data.search_props.mode"=RT | dedup "data.search_props.label" | table data.search_props.label data.search_props.app data.search_props.mode data.search_props.sid data.elapsed | rename data.search_props.label as "savedsearch name" data.search_props.app as app data.search_props.mode as mode data.search_props.sid as sid data.elapsed as "has been running for (seconds)"</query>
+          <earliest>$time.earliest$</earliest>
+          <latest>$time.latest$</latest>
+          <sampleRatio>1</sampleRatio>
+        </search>
+        <option name="count">10</option>
+        <option name="dataOverlayMode">none</option>
+        <option name="drilldown">none</option>
+        <option name="percentagesRow">false</option>
+        <option name="refresh.display">progressbar</option>
+        <option name="rowNumbers">true</option>
+        <option name="totalsRow">false</option>
+        <option name="wrap">true</option>
+      </table>
+    </panel>
+  </row>
+  <row>
+    <panel depends="$ss_count$">
+      <title>scheduled searches configured</title>
+      <html>
+    <a data-unset-token="ss_count">Close this panel</a>
+  </html>
+      <table>
+        <search>
+          <query>| rest /servicesNS/-/-/saved/searches splunk_server=$group$  | search  disabled=0 is_scheduled=1| table title  cron_schedule dispatch.earliest_time dispatch.latest_time auto_summarize  action.email realtime_schedule eai:acl.app eai:acl.owner schedule_priority auto_summarize.dispatch.earliest_time auto_summarize.dispatch.latest_time allow_skew  action.summary_index | append [ | rest /servicesNS/-/-/data/models splunk_server=$group$ | search acceleration=1 | table title acceleration.cron_schedule acceleration.earliest_time acceleration.max_time dataset.type eai:acl.app eai:acl.owner  | rename acceleration.cron_schedule as acceleration_cron_schedule acceleration.earliest_time as acceleration_et acceleration.max_time as acceleration_max_time dataset.type as dataset_type eai:acl.app as app eai:acl.owner as owner]</query>
+          <earliest>$time.earliest$</earliest>
+          <latest>$time.latest$</latest>
+          <sampleRatio>1</sampleRatio>
+        </search>
+        <option name="count">10</option>
+        <option name="dataOverlayMode">none</option>
+        <option name="drilldown">none</option>
+        <option name="percentagesRow">false</option>
+        <option name="refresh.display">progressbar</option>
+        <option name="rowNumbers">true</option>
+        <option name="totalsRow">false</option>
+        <option name="wrap">true</option>
+      </table>
+    </panel>
+  </row>
+  <row>
+    <panel depends="$count$">
+      <table>
+        <title>scheduled searches running over All Time</title>
+        <search>
+          <query>| rest /servicesNS/-/-/saved/searches splunk_server="$group$" | where is_scheduled=1 | search disabled=0   | search dispatch.earliest_time="0"  | table title eai:acl.app eai:acl.owner cron_schedule | rename eai:acl.app as "app" eai:acl.owner as "owner"</query>
+          <earliest>$time.earliest$</earliest>
+          <latest>$time.latest$</latest>
+          <sampleRatio>1</sampleRatio>
+        </search>
+        <option name="count">10</option>
+        <option name="dataOverlayMode">none</option>
+        <option name="drilldown">none</option>
+        <option name="percentagesRow">false</option>
+        <option name="refresh.display">progressbar</option>
+        <option name="rowNumbers">true</option>
+        <option name="totalsRow">false</option>
+        <option name="wrap">true</option>
+      </table>
+      <html>
+    <a data-unset-token="count">Close this panel</a>
+  </html>
+    </panel>
+  </row>
+  <row>
+    <panel>
+      <title>Number of RSS  which have been skipped for their scheduled run time</title>
+      <single>
+        <title>mode: realtime scheduling</title>
+        <search>
+          <query>index=_internal host="$group$" source=*scheduler.log*  savedsearch_name=*  | eval delay=(dispatch_time-scheduled_time)  | convert ctime(scheduled_time) as scheduled_time | convert ctime(dispatch_time) as dispatch_time | join savedsearch_name  [search index=_internal host="$group$" source=*scheduler.log*  status=skipped OR status=continued OR status=deferred savedsearch_name=* | dedup savedsearch_name | table savedsearch_name] | stats count by savedsearch_name scheduled_time status | stats list(status) as status list(count) as count by savedsearch_name scheduled_time | sort +scheduled_time | search status!=completed | search status!=success | search savedsearch_name!=*ACCELERATE* | dedup savedsearch_name | stats count</query>
+          <earliest>$time.earliest$</earliest>
+          <latest>$time.latest$</latest>
+          <sampleRatio>1</sampleRatio>
+        </search>
+        <option name="colorMode">none</option>
+        <option name="drilldown">all</option>
+        <option name="rangeColors">["0x65a637","0xf7bc38","0xd93f3c"]</option>
+        <option name="rangeValues">[0,3]</option>
+        <option name="refresh.display">progressbar</option>
+        <option name="underLabel">click for detail</option>
+        <option name="useColors">1</option>
+        <drilldown>
+          <set token="scount">$click.value$</set>
+        </drilldown>
+      </single>
+      <html>
+       
+<h2>
+          <span style="color: #ffcc00;">Real-time scheduling:</span>
+        </h2>
+<p>(Not to be confused with a realtime search)</p>
+<p class="mw-collapsed">Real-time scheduling ensures that the most recent run of the search returns current data. A scheduled search with real-time scheduling runs at its scheduled run time, or not at all. Real-time scheduled searches can be skipped because longer-running searches have not finished, or because multiple searches with real-time scheduling are set to run at the same time, and their number is higher than the concurrent scheduled search limit and the scheduler is oversubscribed.</p>
+<p class="mw-collapsed">The scheduler always prioritizes searches with real-time scheduling over reports with continuous scheduling.</p>
+<p class="mw-collapsed">
+          <span style="color: #00ccff;">
+            <strong>status</strong>:</span> <span style="color: #00ff00;">Success/Completed</span> , <span style="color: #ff0000;">Skipped</span>
+        </p>
+    
+      </html>
+    </panel>
+    <panel>
+      <title>Number of CSS which have been deferred past their scheduled run time</title>
+      <single>
+        <title>mode: continuous scheduling (ie: summary index populating searches)</title>
+        <search>
+          <query>index=_internal host=$group$ source=*scheduler.log*  savedsearch_name=*  | eval delay=(dispatch_time-scheduled_time)  | convert ctime(scheduled_time) as scheduled_time | convert ctime(dispatch_time) as dispatch_time | join savedsearch_name  [search index=_internal host=$group$ source=*scheduler.log* host=*  status=continued OR status=deferred savedsearch_name=* | dedup savedsearch_name | table savedsearch_name] | stats count by savedsearch_name scheduled_time status | stats list(status) as status list(count) as count by savedsearch_name scheduled_time  | sort +scheduled_time | search status!=completed | search status!=success | search savedsearch_name!=*ACCELERATE* | stats list(scheduled_time) by savedsearch_name | rename list(scheduled_time) as "scheduled time for which search was deferred" | stats count</query>
+          <earliest>$time.earliest$</earliest>
+          <latest>$time.latest$</latest>
+          <sampleRatio>1</sampleRatio>
+        </search>
+        <option name="colorMode">none</option>
+        <option name="drilldown">all</option>
+        <option name="rangeColors">["0x53a051","0xf8be34","0xdc4e41"]</option>
+        <option name="rangeValues">[0,1]</option>
+        <option name="refresh.display">progressbar</option>
+        <option name="underLabel">click for detail</option>
+        <option name="useColors">1</option>
+        <option name="useThousandSeparators">0</option>
+        <drilldown>
+          <set token="css_count">$click.value$</set>
+        </drilldown>
+      </single>
+      <html>
+        <h2>
+          <span style="color: #ffcc00;">Continuous scheduling:</span>
+        </h2>
+<p class="mw-collapsed">Use continuous scheduling for situations where there cannot be a gap in the collection of report data. Continuous scheduling ensures that each scheduled run of a report is eventually performed. If a report with continuous scheduling cannot run now, it will run in the future, after other reports finish.</p>
+<p class="mw-collapsed">The report scheduler gives all scheduled reports the real-time scheduling mode by default, unless they are enabled for summary indexing, in which case it changes their scheduling mode to continuous. It does this because summary indexes are not trustworthy when the scheduled reports that populate them are skipped.</p>
+<p class="mw-collapsed">
+          <span style="color: #00ccff;">
+            <strong>status:</strong>
+          </span> <span style="color: #00ff00;">Success/Completed</span> , <span style="color: #ff0000;">Deferred (a.k.a Continued)</span>
+        </p>
+</html>
+    </panel>
+  </row>
+  <row>
+    <panel depends="$css_count$">
+      <title>Scheduled searches that have been deferred for their scheduled time listed below.</title>
+      <html>
+    <a data-unset-token="css_count">Close this panel</a>
+  </html>
+      <table>
+        <title>The scheduler will try and run these searches again in the future</title>
+        <search>
+          <query>index=_internal host=$group$ source=*scheduler.log*  savedsearch_name=*  | eval delay=(dispatch_time-scheduled_time)  | convert ctime(scheduled_time) as scheduled_time | convert ctime(dispatch_time) as dispatch_time | join savedsearch_name  [search index=_internal host=$group$ source=*scheduler.log*  status=continued OR status=deferred savedsearch_name=* | dedup savedsearch_name | table savedsearch_name] | stats count by savedsearch_name scheduled_time status | stats list(status) as status list(count) as count by savedsearch_name scheduled_time  | sort +scheduled_time | search status!=completed | search status!=success | search savedsearch_name!=*ACCELERATE* | stats list(scheduled_time) by savedsearch_name | rename list(scheduled_time) as "scheduled time for which search was deferred"</query>
+          <earliest>$time.earliest$</earliest>
+          <latest>$time.latest$</latest>
+          <sampleRatio>1</sampleRatio>
+        </search>
+        <option name="count">10</option>
+        <option name="dataOverlayMode">none</option>
+        <option name="drilldown">none</option>
+        <option name="percentagesRow">false</option>
+        <option name="refresh.display">progressbar</option>
+        <option name="rowNumbers">true</option>
+        <option name="totalsRow">false</option>
+        <option name="wrap">true</option>
+      </table>
+    </panel>
+  </row>
+  <row>
+    <panel depends="$scount$">
+      <title>Scheduled searches that have been skipped for their scheduled time listed below.</title>
+      <html>
+    <a data-unset-token="scount">Close this panel</a>
+  </html>
+      <table>
+        <title>The scheduler will not go back and try to re-run these searches</title>
+        <search>
+          <query>index=_internal host="$group$" source=*scheduler.log* savedsearch_name=*  | eval delay=(dispatch_time-scheduled_time)  | convert ctime(scheduled_time) as scheduled_time | convert ctime(dispatch_time) as dispatch_time | join savedsearch_name  [search index=_internal host="$group$" source=*scheduler.log* status=skipped savedsearch_name=* | dedup savedsearch_name | table savedsearch_name] | stats count by savedsearch_name scheduled_time status | stats list(status) as status list(count) as count by savedsearch_name scheduled_time  | sort +scheduled_time | search status!=completed | search status!=success | search savedsearch_name!=*ACCELERATE* | stats list(scheduled_time) by savedsearch_name | rename list(scheduled_time) as "scheduled time for which search was skipped"</query>
+          <earliest>$time.earliest$</earliest>
+          <latest>$time.latest$</latest>
+          <sampleRatio>1</sampleRatio>
+        </search>
+        <option name="count">10</option>
+        <option name="dataOverlayMode">none</option>
+        <option name="drilldown">none</option>
+        <option name="percentagesRow">false</option>
+        <option name="refresh.display">progressbar</option>
+        <option name="rowNumbers">true</option>
+        <option name="totalsRow">false</option>
+        <option name="wrap">true</option>
+      </table>
+    </panel>
+  </row>
+  <row>
+    <panel>
+      <title>Deployment-Wide Total Concurrent Scheduled Searches</title>
+      <chart>
+        <search>
+          <query>`dmc_set_index_introspection` host="$group$" sourcetype=splunk_resource_usage ((component=PerProcess data.search_props.sid::*) OR component=Hostwide) "data.search_props.type"!="ad-hoc" | bin _time span=10s | stats dc(data.search_props.sid) AS distinct_search_count by _time | stats sum(distinct_search_count) AS distinct_search_count by _time | timechart minspan=10s max(distinct_search_count) AS distinct_scheduled_search_count  | join dmc_group_search_head search_group [| rest splunk_server="$group$"  "/services/server/status/limits/search-concurrency"
+              | stats max(max_hist_scheduled_searches) as scheduler_concurrency_limit]</query>
+          <earliest>$time.earliest$</earliest>
+          <latest>$time.latest$</latest>
+          <sampleRatio>1</sampleRatio>
+        </search>
+        <option name="charting.axisLabelsX.majorLabelStyle.overflowMode">ellipsisNone</option>
+        <option name="charting.axisLabelsX.majorLabelStyle.rotation">0</option>
+        <option name="charting.axisTitleX.visibility">visible</option>
+        <option name="charting.axisTitleY.visibility">visible</option>
+        <option name="charting.axisTitleY2.visibility">visible</option>
+        <option name="charting.axisX.scale">linear</option>
+        <option name="charting.axisY.scale">linear</option>
+        <option name="charting.axisY2.enabled">0</option>
+        <option name="charting.axisY2.scale">inherit</option>
+        <option name="charting.chart">area</option>
+        <option name="charting.chart.bubbleMaximumSize">50</option>
+        <option name="charting.chart.bubbleMinimumSize">10</option>
+        <option name="charting.chart.bubbleSizeBy">area</option>
+        <option name="charting.chart.nullValueMode">connect</option>
+        <option name="charting.chart.overlayFields">scheduler_concurrency_limit</option>
+        <option name="charting.chart.showDataLabels">none</option>
+        <option name="charting.chart.sliceCollapsingThreshold">0.01</option>
+        <option name="charting.chart.stackMode">default</option>
+        <option name="charting.chart.style">shiny</option>
+        <option name="charting.drilldown">none</option>
+        <option name="charting.layout.splitSeries">0</option>
+        <option name="charting.layout.splitSeries.allowIndependentYRanges">0</option>
+        <option name="charting.legend.labelStyle.overflowMode">ellipsisMiddle</option>
+        <option name="charting.legend.placement">right</option>
+        <option name="refresh.display">progressbar</option>
+        <option name="trellis.enabled">0</option>
+        <option name="trellis.scales.shared">1</option>
+        <option name="trellis.size">medium</option>
+      </chart>
+    </panel>
+  </row>
+  <row>
+    <panel>
+      <title>cron schedule forecast by number of distinct scheduled searches configured</title>
+      <input type="text" token="iterations" searchWhenChanged="true">
+        <label>number of cron iterations to forecast per scheduled search</label>
+        <default>25</default>
+        <initialValue>25</initialValue>
+      </input>
+      <html>
+        <p>
+          Starting now, show the next $iterations$ expected runs for scheduled searches using a cron schedule and combine them to show which times have the highest number of searches scheduled. Times where distinct scheduled searches is greater than the scheduler concurrency limit, you can expect the scheduler to skip or defer searches. This will lead to scheduled searches either executing after their scheduled time or being skipped completely for a given scheduled time. Use this panel to forecast if scheduler is oversubscribed only during certain times (ie: top/bottom of the hour) or always oversubscribed.
+          
+      </p>
+      <p>
+          <span style="color: #4285F4">Note: requires <a href="https://splunkbase.splunk.com/app/4027/#/overview">Python Cron Iteration for Splunk app</a>
+          </span>
+        </p>
+      </html>
+      <chart>
+        <search>
+          <query>| rest /servicesNS/-/-/saved/searches splunk_server=$group$
+| where disabled=0 and is_scheduled=1 
+| append 
+    [| rest /servicesNS/-/-/data/models splunk_server=$group$ 
+    | search acceleration=1 
+    | rename acceleration.cron_schedule as cron_schedule] 
+| table cron_schedule title 
+| croniter iterations=$iterations$ input=cron_schedule 
+| stats values(title) as searches,dc(title) as dc_searches by croniter_return 
+| convert ctime(croniter_return) timeformat="%Y-%m-%d %H:%M:%S" 
+| sort 0 - dc_searches| chart  max(dc_searches) as "scheduled searches" by croniter_return | join splunk_server [| rest splunk_server="$group$" "/services/server/status/limits/search-concurrency"
+              | stats max(max_hist_scheduled_searches) as "scheduler concurrency limit"]</query>
+          <earliest>$time.earliest$</earliest>
+          <latest>$time.latest$</latest>
+          <sampleRatio>1</sampleRatio>
+        </search>
+        <option name="charting.axisLabelsX.majorLabelStyle.overflowMode">ellipsisNone</option>
+        <option name="charting.axisLabelsX.majorLabelStyle.rotation">0</option>
+        <option name="charting.axisTitleX.text">cron schedule time</option>
+        <option name="charting.axisTitleX.visibility">visible</option>
+        <option name="charting.axisTitleY.text">scheduled search count</option>
+        <option name="charting.axisTitleY.visibility">visible</option>
+        <option name="charting.axisTitleY2.visibility">visible</option>
+        <option name="charting.axisX.abbreviation">none</option>
+        <option name="charting.axisX.scale">linear</option>
+        <option name="charting.axisY.abbreviation">none</option>
+        <option name="charting.axisY.scale">linear</option>
+        <option name="charting.axisY2.abbreviation">none</option>
+        <option name="charting.axisY2.enabled">0</option>
+        <option name="charting.axisY2.scale">inherit</option>
+        <option name="charting.chart">column</option>
+        <option name="charting.chart.bubbleMaximumSize">50</option>
+        <option name="charting.chart.bubbleMinimumSize">10</option>
+        <option name="charting.chart.bubbleSizeBy">area</option>
+        <option name="charting.chart.nullValueMode">gaps</option>
+        <option name="charting.chart.overlayFields">"scheduler concurrency limit"</option>
+        <option name="charting.chart.showDataLabels">none</option>
+        <option name="charting.chart.sliceCollapsingThreshold">0.01</option>
+        <option name="charting.chart.stackMode">default</option>
+        <option name="charting.chart.style">shiny</option>
+        <option name="charting.drilldown">all</option>
+        <option name="charting.layout.splitSeries">0</option>
+        <option name="charting.layout.splitSeries.allowIndependentYRanges">0</option>
+        <option name="charting.legend.labelStyle.overflowMode">ellipsisMiddle</option>
+        <option name="charting.legend.mode">standard</option>
+        <option name="charting.legend.placement">right</option>
+        <option name="charting.lineWidth">2</option>
+        <option name="refresh.display">progressbar</option>
+        <option name="trellis.enabled">0</option>
+        <option name="trellis.scales.shared">1</option>
+        <option name="trellis.size">medium</option>
+        <drilldown>
+          <set token="cron">$click.value$</set>
+        </drilldown>
+      </chart>
+      <html>
+    <p>
+          Click on cron schedule time above to see details of which searches are configured to run at this time
+        </p>
+  
+  </html>
+    </panel>
+  </row>
+  <row>
+    <panel depends="$cron$">
+      <title>cron schedule forecast details</title>
+      <table>
+        <search>
+          <query>| rest /servicesNS/-/-/saved/searches splunk_server=$group$
+| where disabled=0 and is_scheduled=1 
+| append 
+    [| rest /servicesNS/-/-/data/models splunk_server=$group$ 
+    | search acceleration=1 
+    | rename acceleration.cron_schedule as cron_schedule] 
+| table cron_schedule title 
+| croniter iterations=$iterations$ input=cron_schedule 
+| stats values(title) as searches,dc(title) as dc_searches by croniter_return 
+| convert ctime(croniter_return) timeformat="%Y-%m-%d %H:%M:%S" 
+| sort 0 - dc_searches
+| search croniter_return="$cron$"| join  splunk_server [| rest  splunk_server=$group$  "/services/server/status/limits/search-concurrency"
+              | stats max(max_hist_scheduled_searches) as "scheduler_concurrency_limit"]| eval oversubscription_delta=dc_searches-scheduler_concurrency_limit | eval scheduler_oversubscribed= case(dc_searches&gt;scheduler_concurrency_limit, "yes", dc_searches&lt;scheduler_concurrency_limit, "no") | rename croniter_return as "cron schedule time" | table "cron schedule time" searches dc_searches "scheduler_concurrency_limit" oversubscription_delta scheduler_oversubscribed</query>
+          <earliest>$time.earliest$</earliest>
+          <latest>$time.latest$</latest>
+          <sampleRatio>1</sampleRatio>
+        </search>
+        <option name="count">10</option>
+        <option name="dataOverlayMode">none</option>
+        <option name="drilldown">none</option>
+        <option name="percentagesRow">false</option>
+        <option name="refresh.display">progressbar</option>
+        <option name="rowNumbers">false</option>
+        <option name="totalsRow">false</option>
+        <option name="wrap">true</option>
+      </table>
+      <html>
+    <a data-unset-token="cron">Close this panel</a>
+  </html>
+    </panel>
+  </row>
+  <row>
+    <panel>
+      <title>Number of  scheduled searches configured grouped by cron_schedule</title>
+      <table>
+        <search>
+          <query>| rest /servicesNS/-/-/saved/searches splunk_server=$group$
+| where disabled=0 and is_scheduled=1 
+| append 
+    [| rest /servicesNS/-/-/data/models splunk_server=$group$
+    | search acceleration=1 
+    | rename acceleration.cron_schedule as cron_schedule] 
+|stats count by cron_schedule</query>
+          <earliest>$time.earliest$</earliest>
+          <latest>$time.latest$</latest>
+          <sampleRatio>1</sampleRatio>
+        </search>
+        <option name="count">10</option>
+        <option name="dataOverlayMode">none</option>
+        <option name="drilldown">none</option>
+        <option name="percentagesRow">false</option>
+        <option name="refresh.display">progressbar</option>
+        <option name="rowNumbers">false</option>
+        <option name="totalsRow">false</option>
+        <option name="wrap">true</option>
+      </table>
+    </panel>
+  </row>
+  <row>
+    <panel>
+      <html>
+    <p>strategies to reduce scheduler oversubscription</p>
+<img src="/static/app/themes/images/sched_tree.png">
+</img>
+</html>
+    </panel>
+  </row>
+  <row>
+    <panel>
+      <html> <a href="https://www.splunk.com/blog/2017/10/10/schedule-windows-vs-skewing.html">Scheduled Windows vs Skewing</a> </html>
+      <html> <a href="http://docs.splunk.com/Documentation/Splunk/7.1.2/Report/Configurethepriorityofscheduledreports">Scheduled Search Priority</a> </html>
+      <html> <a href="http://docs.splunk.com/Documentation/Splunk/7.1.2/Report/Configurethepriorityofscheduledreports#Real-time_scheduling_and_continuous_scheduling">Scheduling Modes </a>
+      </html>
+      <html> <a href="https://docs.splunk.com/Documentation/Splunk/7.2.3/Workloads/Aboutworkloadmanagement">Workload Management </a>
+      </html>
+    </panel>
+  </row>
+</form>

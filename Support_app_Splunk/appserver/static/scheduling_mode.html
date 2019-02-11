@@ -1,0 +1,14 @@
+<h1 class="mw-collapsed">Scheduling Mode</h1>
+<p class="mw-collapsed">Each manually scheduled report has a scheduling mode.</p>
+<p class="mw-collapsed">There are two possible scheduling modes:</p>
+<p class="mw-collapsed">real-time scheduling or continuous scheduling.</p>
+<h2><span style="color: #ffcc00;">Real-time scheduling:</span></h2>
+<p>(Not to be confused with a realtime search)</p>
+<p class="mw-collapsed">Real-time scheduling ensures that the most recent run of the report returns current data. A scheduled report with real-time scheduling runs at its scheduled run time, or not at all. Real-time scheduled reports can be skipped because longer-running reports have not finished, or because multiple reports with real-time scheduling are set to run at the same time, and their number is higher than the concurrent scheduled report limit.</p>
+<p class="mw-collapsed">The report scheduler always prioritizes reports with real-time scheduling over reports with continuous scheduling.</p>
+<p class="mw-collapsed"><span style="color: #00ccff;"><strong>Possible status</strong>:</span> <span style="color: #00ff00;">Success/Completed</span> , <span style="color: #ff0000;">Skipped</span></p>
+<h2><span style="color: #ffcc00;">Continuous scheduling:</span></h2>
+<p class="mw-collapsed">Use continuous scheduling for situations where there cannot be a gap in the collection of report data. Continuous scheduling ensures that each scheduled run of a report is eventually performed. If a report with continuous scheduling cannot run now, it will run in the future, after other reports finish.</p>
+<p class="mw-collapsed">The report scheduler gives all scheduled reports the real-time scheduling mode by default, unless they are enabled for summary indexing, in which case it changes their scheduling mode to continuous. It does this because summary indexes are not trustworthy when the scheduled reports that populate them are skipped.</p>
+<p class="mw-collapsed"><span style="color: #00ccff;"><strong>Possible status:</strong></span> <span style="color: #00ff00;">Success/Completed</span> , <span style="color: #ff0000;">Deferred (a.k.a Continued)</span></p>
+<p>&nbsp;</p>

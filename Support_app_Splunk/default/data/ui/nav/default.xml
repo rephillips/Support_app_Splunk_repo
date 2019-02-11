@@ -1,0 +1,18 @@
+<nav search_view="search">
+  <view name="search" default='true'/>
+  <collection label="Investigate" color="#ffbb33">
+   <collection label="Scheduler Analysis">
+      <collection label="Standalone Search Head">
+      <view name="scheduler_analysis_SA_overview"/>
+        <view name="scheduler_analysis_SA"/>
+        </collection>
+        <collection label="Search Head Clustering">
+          <view name="scheduler_analysis_SHC_overview"/>
+          <view name="scheduler_analysis_SHC"/>
+
+     </collection>
+     </collection>
+
+
+    </collection>
+</nav>
