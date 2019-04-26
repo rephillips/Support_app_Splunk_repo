@@ -1,0 +1,348 @@
+<form hideEdit="false" script="common_control.js, table_cell_highlighting.js, table_cell_highlighting1.js" stylesheet="shared.css, health-check.css, table_cell_highlighting.css" theme="light">
+  <label>Standalone SH: Search Knowledge Bundle</label>
+  <fieldset submitButton="false">
+    <input type="dropdown" token="host" searchWhenChanged="true">
+      <label>select search head</label>
+      <fieldForLabel>host</fieldForLabel>
+      <fieldForValue>host</fieldForValue>
+      <search>
+        <query>| metadata type=hosts index=_* | dedup host | fields host</query>
+        <earliest>-60m@m</earliest>
+        <latest>now</latest>
+      </search>
+    </input>
+    <input type="time" token="time" searchWhenChanged="true">
+      <label></label>
+      <default>
+        <earliest>-4h@m</earliest>
+        <latest>now</latest>
+      </default>
+    </input>
+  </fieldset>
+  <row>
+    <panel>
+      <title>bundle WARN &amp; ERROR</title>
+      <table>
+        <search>
+          <query>index=_internal host=$host$ source=*splunkd.log* component=*distributed* log_level!=INFO | rex "\d{2}\-\d{2}\-\d{4}\s+\d{2}\:\d{2}\:\d{2}\.\d{3}\s+\S+\s+\w+\s+\w+(?&lt;msg&gt;.+)" | stats count by host component log_level msg | sort -count</query>
+          <earliest>$time.earliest$</earliest>
+          <latest>$time.latest$</latest>
+          <sampleRatio>1</sampleRatio>
+        </search>
+        <option name="count">5</option>
+        <option name="dataOverlayMode">none</option>
+        <option name="drilldown">row</option>
+        <option name="percentagesRow">false</option>
+        <option name="rowNumbers">true</option>
+        <option name="totalsRow">false</option>
+        <option name="wrap">true</option>
+        <drilldown>
+          <set token="wrow">$click.name$</set>
+        </drilldown>
+      </table>
+      <html>
+    <p>Click any row above to see timechart</p>
+  </html>
+    </panel>
+  </row>
+  <row>
+    <panel depends="$wrow$">
+      <title>distributed search warnings and errors</title>
+      <input type="dropdown" token="span" searchWhenChanged="true">
+        <label>span</label>
+        <choice value="minspan=10s">auto</choice>
+        <choice value="span=1m">1m</choice>
+        <choice value="span=5m">5m</choice>
+        <choice value="span=15m">15m</choice>
+        <choice value="span=1h">1h</choice>
+        <default>span=5m</default>
+        <initialValue>span=5m</initialValue>
+        <fieldForLabel>span</fieldForLabel>
+        <fieldForValue>span</fieldForValue>
+      </input>
+      <chart>
+        <search>
+          <query>index=_internal host=$host$ source=*splunkd.log* component=*distributed*  log_level!=INFO  | timechart $span$ count by  host useother=f limit=0</query>
+          <earliest>$time.earliest$</earliest>
+          <latest>$time.latest$</latest>
+          <sampleRatio>1</sampleRatio>
+        </search>
+        <option name="charting.axisLabelsX.majorLabelStyle.overflowMode">ellipsisNone</option>
+        <option name="charting.axisLabelsX.majorLabelStyle.rotation">0</option>
+        <option name="charting.axisTitleX.visibility">visible</option>
+        <option name="charting.axisTitleY.visibility">visible</option>
+        <option name="charting.axisTitleY2.visibility">visible</option>
+        <option name="charting.axisX.scale">linear</option>
+        <option name="charting.axisY.scale">linear</option>
+        <option name="charting.axisY2.enabled">0</option>
+        <option name="charting.axisY2.scale">inherit</option>
+        <option name="charting.chart">column</option>
+        <option name="charting.chart.bubbleMaximumSize">50</option>
+        <option name="charting.chart.bubbleMinimumSize">10</option>
+        <option name="charting.chart.bubbleSizeBy">area</option>
+        <option name="charting.chart.nullValueMode">connect</option>
+        <option name="charting.chart.showDataLabels">none</option>
+        <option name="charting.chart.sliceCollapsingThreshold">0.01</option>
+        <option name="charting.chart.stackMode">stacked</option>
+        <option name="charting.chart.style">shiny</option>
+        <option name="charting.drilldown">all</option>
+        <option name="charting.layout.splitSeries">0</option>
+        <option name="charting.layout.splitSeries.allowIndependentYRanges">0</option>
+        <option name="charting.legend.labelStyle.overflowMode">ellipsisMiddle</option>
+        <option name="charting.legend.placement">right</option>
+        <option name="height">447</option>
+        <option name="refresh.display">progressbar</option>
+        <option name="trellis.enabled">0</option>
+        <option name="trellis.scales.shared">1</option>
+        <option name="trellis.size">medium</option>
+        <drilldown>
+          <set token="host1">$click.name2$</set>
+        </drilldown>
+      </chart>
+      <html>
+    <p>Click any host to see timechart</p>
+    <a data-unset-token="wrow">Close this panel</a>
+  </html>
+    </panel>
+  </row>
+  <row>
+    <panel depends="$host1$">
+      <title>distributed search warnings and errors for $host1$</title>
+      <input type="dropdown" token="span" searchWhenChanged="true">
+        <label>span</label>
+        <choice value="minspan=10s">auto</choice>
+        <choice value="span=1m">1m</choice>
+        <choice value="span=5m">5m</choice>
+        <choice value="span=15m">15m</choice>
+        <choice value="span=1h">1h</choice>
+        <default>span=5m</default>
+        <initialValue>span=5m</initialValue>
+        <fieldForLabel>span</fieldForLabel>
+        <fieldForValue>span</fieldForValue>
+      </input>
+      <chart>
+        <search>
+          <query>index=_internal  host=$host1$ source=*splunkd.log* component=*distributed*  log_level!=INFO | rex "\d{2}\-\d{2}\-\d{4}\s+\d{2}\:\d{2}\:\d{2}\.\d{3}\s+\S+\s+\w+\s+\w+(?&lt;msg&gt;.+)" | eval host_msg=host.":::".msg | timechart $span$ count by  host_msg useother=f limit=0</query>
+          <earliest>$time.earliest$</earliest>
+          <latest>$time.latest$</latest>
+          <sampleRatio>1</sampleRatio>
+        </search>
+        <option name="charting.axisLabelsX.majorLabelStyle.overflowMode">ellipsisNone</option>
+        <option name="charting.axisLabelsX.majorLabelStyle.rotation">0</option>
+        <option name="charting.axisTitleX.visibility">visible</option>
+        <option name="charting.axisTitleY.visibility">visible</option>
+        <option name="charting.axisTitleY2.visibility">visible</option>
+        <option name="charting.axisX.scale">linear</option>
+        <option name="charting.axisY.scale">linear</option>
+        <option name="charting.axisY2.enabled">0</option>
+        <option name="charting.axisY2.scale">inherit</option>
+        <option name="charting.chart">column</option>
+        <option name="charting.chart.bubbleMaximumSize">50</option>
+        <option name="charting.chart.bubbleMinimumSize">10</option>
+        <option name="charting.chart.bubbleSizeBy">area</option>
+        <option name="charting.chart.nullValueMode">connect</option>
+        <option name="charting.chart.showDataLabels">none</option>
+        <option name="charting.chart.sliceCollapsingThreshold">0.01</option>
+        <option name="charting.chart.stackMode">stacked</option>
+        <option name="charting.chart.style">shiny</option>
+        <option name="charting.drilldown">all</option>
+        <option name="charting.layout.splitSeries">0</option>
+        <option name="charting.layout.splitSeries.allowIndependentYRanges">0</option>
+        <option name="charting.legend.labelStyle.overflowMode">ellipsisMiddle</option>
+        <option name="charting.legend.placement">right</option>
+        <option name="height">447</option>
+        <option name="refresh.display">progressbar</option>
+        <option name="trellis.enabled">0</option>
+        <option name="trellis.scales.shared">1</option>
+        <option name="trellis.size">medium</option>
+        <drilldown>
+          <set token="host1">$click.value$</set>
+        </drilldown>
+      </chart>
+      <html>
+    <a data-unset-token="host1">Close this panel</a>
+  </html>
+    </panel>
+  </row>
+  <row>
+    <panel>
+      <title>Distributed Peer Heartbeat - Peer Count per SH (SH heartbeats peers every 5m)</title>
+      <chart>
+        <search>
+          <query>index=_internal host=$host$ source=*metrics.log* group=search_health_metrics name=distributed_peer_heartbeat | timechart span=5m max(Peer_Count) as peer_count by host</query>
+          <earliest>$time.earliest$</earliest>
+          <latest>$time.latest$</latest>
+          <sampleRatio>1</sampleRatio>
+        </search>
+        <option name="charting.axisLabelsX.majorLabelStyle.overflowMode">ellipsisNone</option>
+        <option name="charting.axisLabelsX.majorLabelStyle.rotation">0</option>
+        <option name="charting.axisTitleX.visibility">visible</option>
+        <option name="charting.axisTitleY.visibility">collapsed</option>
+        <option name="charting.axisTitleY2.visibility">visible</option>
+        <option name="charting.axisX.abbreviation">none</option>
+        <option name="charting.axisX.scale">linear</option>
+        <option name="charting.axisY.abbreviation">auto</option>
+        <option name="charting.axisY.scale">linear</option>
+        <option name="charting.axisY2.abbreviation">none</option>
+        <option name="charting.axisY2.enabled">0</option>
+        <option name="charting.axisY2.scale">inherit</option>
+        <option name="charting.chart">column</option>
+        <option name="charting.chart.bubbleMaximumSize">50</option>
+        <option name="charting.chart.bubbleMinimumSize">10</option>
+        <option name="charting.chart.bubbleSizeBy">area</option>
+        <option name="charting.chart.nullValueMode">zero</option>
+        <option name="charting.chart.showDataLabels">minmax</option>
+        <option name="charting.chart.sliceCollapsingThreshold">0.01</option>
+        <option name="charting.chart.stackMode">default</option>
+        <option name="charting.chart.style">shiny</option>
+        <option name="charting.drilldown">none</option>
+        <option name="charting.layout.splitSeries">1</option>
+        <option name="charting.layout.splitSeries.allowIndependentYRanges">1</option>
+        <option name="charting.legend.labelStyle.overflowMode">ellipsisMiddle</option>
+        <option name="charting.legend.mode">standard</option>
+        <option name="charting.legend.placement">right</option>
+        <option name="charting.lineWidth">2</option>
+        <option name="refresh.display">progressbar</option>
+        <option name="trellis.enabled">0</option>
+        <option name="trellis.scales.shared">1</option>
+        <option name="trellis.size">medium</option>
+      </chart>
+    </panel>
+  </row>
+  <row>
+    <panel>
+      <title>Peer count per search head</title>
+      <table>
+        <search>
+          <query>| rest splunk_server=$host$  /services/search/distributed/peers
+          | fields splunk_server, peerName
+          | stats list(peerName) as peers dc(peerName) as peerCount by splunk_server</query>
+          <earliest>$time.earliest$</earliest>
+          <latest>$time.latest$</latest>
+          <sampleRatio>1</sampleRatio>
+        </search>
+        <option name="count">5</option>
+        <option name="dataOverlayMode">none</option>
+        <option name="drilldown">none</option>
+        <option name="percentagesRow">false</option>
+        <option name="refresh.display">progressbar</option>
+        <option name="rowNumbers">false</option>
+        <option name="totalsRow">false</option>
+        <option name="wrap">true</option>
+      </table>
+    </panel>
+  </row>
+  <row>
+    <panel>
+      <title>knowledge bundles on SH : $host$</title>
+      <table>
+        <search>
+          <query>| rest splunk_server=$host$   /services/search/distributed/bundle-replication-files | convert ctime(timestamp) as timestamp| eval sizeMB= round(size/1024/1024,2) | table  splunk_server filename location size sizeMB timestamp title| rename  title as "bundle version" | join splunk_server [| rest splunk_server=$host$ /services/configs/conf-distsearch | search maxBundleSize=* | table splunk_server maxBundleSize | rename  maxBundleSize as "maxBundleSize (distsearch.conf)"] </query>
+          <earliest>$time.earliest$</earliest>
+          <latest>$time.latest$</latest>
+          <sampleRatio>1</sampleRatio>
+        </search>
+        <option name="count">5</option>
+        <option name="dataOverlayMode">none</option>
+        <option name="drilldown">none</option>
+        <option name="percentagesRow">false</option>
+        <option name="refresh.display">progressbar</option>
+        <option name="rowNumbers">false</option>
+        <option name="totalsRow">false</option>
+        <option name="wrap">true</option>
+      </table>
+    </panel>
+  </row>
+  <row>
+    <panel>
+      <title>SH:$host$ view of bundle versions on each peer</title>
+      <table>
+        <search>
+          <query>| rest splunk_server=$host$ /services/search/distributed/peers 
+| rex field=bundle_isIndexing "\w\s-\s(?&lt;truefalse&gt;\w+)" 
+| stats values(bundle_versions) as "bundle version" dc(bundle_versions) as "bundle versions on indexer" by splunk_server host status version   guid 
+| rename version as "indexer version" guid as "indexer guid" host as indexer 
+</query>
+          <earliest>$time.earliest$</earliest>
+          <latest>$time.latest$</latest>
+          <sampleRatio>1</sampleRatio>
+        </search>
+        <option name="count">5</option>
+        <option name="dataOverlayMode">none</option>
+        <option name="drilldown">none</option>
+        <option name="percentagesRow">false</option>
+        <option name="refresh.display">progressbar</option>
+        <option name="rowNumbers">false</option>
+        <option name="totalsRow">false</option>
+        <option name="wrap">true</option>
+      </table>
+    </panel>
+  </row>
+  <row>
+    <panel>
+      <title>How much space do my search bundles take up on the indexer?</title>
+      <input type="text" token="bundle_count" searchWhenChanged="true">
+        <label>number of knowledge bundles residing on peer (typically 5-10 per SH/SHC id)</label>
+        <default>10</default>
+        <initialValue>10</initialValue>
+      </input>
+      <table>
+        <search>
+          <query>| rest splunk_server=$host$  /services/search/distributed/bundle-replication-files  | stats max(size) as max_full_bundle_size by splunk_server | eval bundles_on_peer=$bundle_count$ | eval agg_bundle_size_demand_on_peer=max_full_bundle_size*bundles_on_peer*2 | eval agg_bundle_size_demand_on_peerMB= round(agg_bundle_size_demand_on_peer/1024/1024,2) | table splunk_server max_full_bundle_size bundles_on_peer agg_bundle_size_demand_on_peerMB  </query>
+          <earliest>$time.earliest$</earliest>
+          <latest>$time.latest$</latest>
+          <sampleRatio>1</sampleRatio>
+        </search>
+        <option name="count">20</option>
+        <option name="dataOverlayMode">none</option>
+        <option name="drilldown">none</option>
+        <option name="percentagesRow">false</option>
+        <option name="refresh.display">progressbar</option>
+        <option name="rowNumbers">false</option>
+        <option name="totalsRow">false</option>
+        <option name="wrap">true</option>
+      </table>
+    </panel>
+  </row>
+  <row>
+    <panel>
+      <title>lookup files which are configured for automatic lookups (don't blacklist these from the knowledge bundle)</title>
+      <table>
+        <search>
+          <query>| rest splunk_server=$host$  /services/configs/conf-transforms | search filename=*| table splunk_server eai:acl.app title filename id | rename eai:acl.app as app title as stanza </query>
+          <earliest>$time.earliest$</earliest>
+          <latest>$time.latest$</latest>
+          <sampleRatio>1</sampleRatio>
+        </search>
+        <option name="count">5</option>
+        <option name="dataOverlayMode">none</option>
+        <option name="drilldown">none</option>
+        <option name="percentagesRow">false</option>
+        <option name="rowNumbers">true</option>
+        <option name="totalsRow">false</option>
+        <option name="wrap">true</option>
+      </table>
+    </panel>
+  </row>
+  <row>
+    <panel>
+      <title>timeout settings - distsearch.conf</title>
+      <table>
+        <search>
+          <query>| rest splunk_server=$host$  /services/configs/conf-distsearch | fields *Timeout* splunk_server title id | search title=distributedSearch OR title=replicationSettings | table splunk_server title *Timeout* | rename title as stanza | sort -splunk_server</query>
+          <earliest>$time.earliest$</earliest>
+          <latest>$time.latest$</latest>
+          <sampleRatio>1</sampleRatio>
+        </search>
+        <option name="count">100</option>
+        <option name="dataOverlayMode">none</option>
+        <option name="drilldown">none</option>
+        <option name="percentagesRow">false</option>
+        <option name="refresh.display">progressbar</option>
+        <option name="rowNumbers">false</option>
+        <option name="totalsRow">false</option>
+        <option name="wrap">true</option>
+      </table>
+    </panel>
+  </row>
+</form>
